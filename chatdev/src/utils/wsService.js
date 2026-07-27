@@ -8,8 +8,12 @@ export const wsService = {
   connect: async (token) => {
     return new Promise((resolve, reject) => {
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      const host = window.location.host
-      const url = `${protocol}://${host}/ws?token=${token}`
+      // Connect directly to backend server, not through Vite proxy
+      const backendHost = window.location.hostname === 'localhost' 
+        ? 'localhost:8000' 
+        : window.location.host
+      const url = `${protocol}://${backendHost}/ws?token=${token}`
+      console.log('📡 WebSocket URL:', url)
       
       try {
         ws = new WebSocket(url)
@@ -31,8 +35,9 @@ export const wsService = {
         }
         
         ws.onerror = (error) => {
-          console.error('WebSocket error:', error)
-          reject(error)
+          console.error('❌ WebSocket error:', error)
+          console.error('Failed to connect to:', url)
+          reject(new Error(`WebSocket connection failed to ${url}`))
         }
         
         ws.onclose = () => {

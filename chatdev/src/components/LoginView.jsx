@@ -8,9 +8,17 @@ export default function LoginView({ onLogin }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (!email || !password) {
+      alert('Por favor completa email y contraseña')
+      return
+    }
     setIsLoading(true)
     try {
+      console.log('🔐 Attempting login with:', email)
       await onLogin(email, password)
+    } catch (error) {
+      console.error('Login error:', error)
+      alert('Error al iniciar sesión: ' + error.message)
     } finally {
       setIsLoading(false)
     }

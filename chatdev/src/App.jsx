@@ -29,12 +29,20 @@ export default function App() {
 
   const attemptConnect = async (token) => {
     try {
+      console.log('🔌 Attempting to connect WebSocket...')
       await wsService.connect(token)
+      console.log('✅ WebSocket connected, creating initial chat...')
+      // Auto-create first chat
+      const store = useStore.getState()
+      if (!store.currentChatId) {
+        store.createChat('Chat - ' + new Date().toLocaleDateString())
+      }
       setIsAuthenticated(true)
     } catch (error) {
-      console.error('Conexión fallida:', error)
+      console.error('❌ Conexión fallida:', error)
       localStorage.removeItem('token')
       setIsAuthenticated(false)
+      alert('Error de conexión: ' + error.message)
     } finally {
       setIsLoading(false)
     }

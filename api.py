@@ -245,6 +245,19 @@ Si necesitas aclarar algo, pregunta al usuario naturalmente antes del JSON final
         }
     }))
 
+    # Enviar mensaje de bienvenida
+    welcome_msg = "¡Hola! Soy ChatDev, tu asistente de desarrollo AI.\n\n¿Qué necesitas que haga? Puedo:\n• Crear scripts Python\n• Diseñar queries SQL\n• Analizar y procesar datos\n• Resolver problemas de programación\n\nDescribe tu solicitud:"
+    
+    await websocket.send_text(json.dumps({
+        "type": "message",
+        "payload": {
+            "role": "planner",
+            "content": welcome_msg,
+            "phase": "planeamiento",
+            "model": PLANNER_MODEL
+        }
+    }))
+
     while True:
         # Esperar mensaje del usuario
         user_input = None
@@ -528,6 +541,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
     try:
         while True:
             # FASE PLANEAMIENTO
+            print(f"📍 Iniciando fase planeamiento para {session_id}")
             plan, messages = await async_planner_phase(
                 websocket,
                 session_id,
