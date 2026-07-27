@@ -34,6 +34,30 @@ TOPIC_KEYWORDS = {
     }
 }
 
+# Roles por palabras clave y modelos asociados
+ROLE_KEYWORDS = {
+    "Arquitecto": {
+        "keywords": {"arquitecto", "diseño", "proyecto", "plan", "estructura", "arquitectura", "diagrama", "blueprint", "planear", "diseñar"},
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "prompt_file": "system_prompt.md"
+    },
+    "Python": {
+        "keywords": {"python", "pandas", "dataframe", "numpy", "script", "código", "programación", "función", "clase"},
+        "model": "poolside/laguna-m1:free",
+        "prompt_file": "prompt_pandas.md"
+    },
+    "SQL": {
+        "keywords": {"sql", "postgres", "postgresql", "database", "query", "consulta", "tabla", "schema", "ddl", "dml"},
+        "model": "cohere/north-mini-code:free",
+        "prompt_file": "metaprompt_postgresql.md"
+    },
+    "LLM": {
+        "keywords": {"llm", "ia", "ai", "gpt", "modelo", "prompt", "rag", "embeddings", "vector", "generativo", "langchain"},
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "prompt_file": "prompt_analisis_llm.md"
+    }
+}
+
 
 def load_system_instructions(file_name: str = SYSTEM_PROMPT_FILE) -> str:
     """Load system instructions from a text file located next to this script."""
@@ -70,6 +94,38 @@ def get_system_prompt_for_topic(topic: str | None) -> str:
     """Get the system prompt for the detected topic."""
     if topic and topic in TOPIC_KEYWORDS:
         prompt_file = TOPIC_KEYWORDS[topic]["prompt_file"]
+        prompt = load_prompt_file(prompt_file)
+        if prompt:
+            return prompt
+    
+    # Default prompt
+    return load_system_instructions()
+
+
+def detect_role(user_input: str) -> str | None:
+    """Detect the role based on keywords in user input."""
+    text_lower = user_input.lower()
+    
+    for role, config in ROLE_KEYWORDS.items():
+        if any(keyword in text_lower for keyword in config["keywords"]):
+            return role
+    
+    return None
+
+
+def get_model_for_role(role: str | None) -> str:
+    """Get the model for the detected role."""
+    if role and role in ROLE_KEYWORDS:
+        return ROLE_KEYWORDS[role]["model"]
+    
+    # Default model
+    return DEFAULT_MODEL
+
+
+def get_prompt_for_role(role: str | None) -> str:
+    """Get the system prompt for the detected role."""
+    if role and role in ROLE_KEYWORDS:
+        prompt_file = ROLE_KEYWORDS[role]["prompt_file"]
         prompt = load_prompt_file(prompt_file)
         if prompt:
             return prompt
@@ -151,19 +207,15 @@ def create_model(model_name: str) -> ChatOpenRouter:
 
 
 def main() -> None:
-    """Run the terminal chatbot with dynamic system prompts based on topic."""
+    """Run the terminal chatbot with dynamic roles and models based on user input."""
     load_dotenv()
-    model_candidates = get_model_candidates()
-    active_model_index = 0
-    model_name = model_candidates[active_model_index]
-    model = create_model(model_name)
-
-    role = os.getenv("SYSTEM_ROLE", DEFAULT_SYSTEM_ROLE).strip() or DEFAULT_SYSTEM_ROLE
-    default_instructions = load_system_instructions()
     
-    # Initial system prompt (generic)
-    current_topic: str | None = None
-    system_prompt = build_system_prompt(role, default_instructions)
+    # Initialize with default model
+    current_role: str | None = None
+    current_model_name = get_model_for_role(None)
+    model = create_model(current_model_name)
+
+    system_prompt = get_prompt_for_role(None)
 
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system_prompt}
@@ -171,9 +223,9 @@ def main() -> None:
 
     print(
         "Mi primer Chatbot vía OpenRouter.\n"
-        f"Modelo: {model_name}\n"
+        f"Modelo: {current_model_name}\n"
         "Escribe 'salir' para terminar.\n"
-        "El sistema detectará automáticamente si preguntas sobre SQL, IA/LLM, Pandas o desarrollo general.\n"
+        "El sistema detectará automáticamente el rol (Arquitecto, Python, SQL, LLM) y usará el modelo adecuado.\n"
     )
 
     while True:
@@ -190,20 +242,27 @@ def main() -> None:
             print("Hasta luego.")
             break
 
-        # Detect topic from user input
-        detected_topic = detect_topic(user_input)
+        # Detect role from user input
+        detected_role = detect_role(user_input)
         
-        # Update system prompt if topic changed
-        if detected_topic != current_topic:
-            current_topic = detected_topic
-            new_system_prompt = get_system_prompt_for_topic(detected_topic)
-            system_prompt = build_system_prompt(role, new_system_prompt)
+        # Update model and prompt if role changed
+        if detected_role != current_role:
+            current_role = detected_role
+            new_model_name = get_model_for_role(detected_role)
+            new_prompt = get_prompt_for_role(detected_role)
             
-            # Update system message in conversation
+            # Update model if it changed
+            if new_model_name != current_model_name:
+                current_model_name = new_model_name
+                model = create_model(current_model_name)
+                print(f"[Cambio de modelo: {current_model_name}]\n")
+            
+            # Update system prompt
+            system_prompt = new_prompt
             messages[0] = {"role": "system", "content": system_prompt}
             
-            if detected_topic:
-                print(f"[Sistema detectó: {detected_topic.upper()}]\n")
+            if detected_role:
+                print(f"[Rol detectado: {detected_role}]\n")
 
         messages.append({"role": "user", "content": user_input})
 
@@ -222,36 +281,6 @@ def main() -> None:
 
         except Exception as error:
             error_text = str(error)
-
-            if "unavailable for free" in error_text.lower():
-                recovered = False
-
-                for next_index in range(active_model_index + 1, len(model_candidates)):
-                    next_model_name = model_candidates[next_index]
-
-                    try:
-                        model = create_model(next_model_name)
-                        response = model.invoke(messages)
-                        bot_text = response_to_text(response) or "No se recibió contenido del modelo."
-
-                        print(
-                            "El modelo actual no está disponible en free. "
-                            f"Cambiando automáticamente a: {next_model_name}\n"
-                        )
-                        print(f"Bot: {bot_text}\n")
-
-                        messages.append({"role": "assistant", "content": bot_text})
-                        messages = trim_history(messages)
-                        active_model_index = next_index
-                        model_name = next_model_name
-                        recovered = True
-                        time.sleep(2)
-                        break
-                    except Exception:
-                        continue
-
-                if recovered:
-                    continue
 
             print(f"Error al consultar OpenRouter: {error_text}\n")
 
