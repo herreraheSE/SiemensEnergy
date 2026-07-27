@@ -18,22 +18,6 @@ DEFAULT_SYSTEM_ROLE = ""
 SYSTEM_PROMPT_FILE = "system_prompt.txt"
 PROMPTS_DIR = "prompts"
 
-# Palabras clave por tema
-TOPIC_KEYWORDS = {
-    "postgresql": {
-        "keywords": {"sql", "postgres", "postgresql", "database", "tabla", "query", "consulta", "ddl", "dml", "schema"},
-        "prompt_file": "metaprompt_postgresql.md"
-    },
-    "llm": {
-        "keywords": {"llm", "ia", "ai", "gpt", "modelo", "prompt", "rag", "embeddings", "vector", "generativo"},
-        "prompt_file": "prompt_analisis_llm.md"
-    },
-    "pandas": {
-        "keywords": {"pandas", "python", "dataframe", "csv", "data", "numpy", "excel", "series", "df"},
-        "prompt_file": "prompt_pandas.md"
-    }
-}
-
 # Roles por palabras clave y modelos asociados
 ROLE_KEYWORDS = {
     "Arquitecto": {
@@ -69,17 +53,6 @@ def load_system_instructions(file_name: str = SYSTEM_PROMPT_FILE) -> str:
         return ""
 
 
-def detect_topic(user_input: str) -> str | None:
-    """Detect the topic based on keywords in user input."""
-    text_lower = user_input.lower()
-    
-    for topic, config in TOPIC_KEYWORDS.items():
-        if any(keyword in text_lower for keyword in config["keywords"]):
-            return topic
-    
-    return None
-
-
 def load_prompt_file(file_name: str) -> str:
     """Load prompt from prompts directory."""
     file_path = Path(__file__).parent / PROMPTS_DIR / file_name
@@ -88,18 +61,6 @@ def load_prompt_file(file_name: str) -> str:
         return file_path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return ""
-
-
-def get_system_prompt_for_topic(topic: str | None) -> str:
-    """Get the system prompt for the detected topic."""
-    if topic and topic in TOPIC_KEYWORDS:
-        prompt_file = TOPIC_KEYWORDS[topic]["prompt_file"]
-        prompt = load_prompt_file(prompt_file)
-        if prompt:
-            return prompt
-    
-    # Default prompt
-    return load_system_instructions()
 
 
 def detect_role(user_input: str) -> str | None:
