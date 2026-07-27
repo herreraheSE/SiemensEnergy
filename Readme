@@ -15,3 +15,27 @@ Incluye materiales, ejemplos y ejercicios relacionados con:
 
 ```text
 https://github.com/orodriguezm1/SiemensEnergy/
+```
+
+## Script de analisis de reviews
+
+Este repositorio incluye un script unico para procesar reviews desde un CSV,
+calcular una puntuacion LLM y generar un reporte global.
+
+### Requisitos
+
+- Tener `.venv` creado con `setup_windows.cmd` o equivalente.
+- Configurar `OPENROUTER_API_KEY` en `.env`.
+- Tener el archivo de entrada en:
+  `C:\Users\herrerahe\Downloads\CodeInterpreter.csv`
+
+### Ejecucion (Windows)
+
+```bat
+.venv\Scripts\python.exe score_reviews.py
+```
+
+### Salidas
+
+- `output_reviews.csv` con columnas: `review`, `calificacion`, `LLM`, `promedio`.
+- `reporte_producto.txt` con el resumen global del producto.

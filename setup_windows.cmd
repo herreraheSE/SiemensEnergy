@@ -2,13 +2,13 @@
 setlocal
 cd /d "%~dp0"
 
-echo Buscando Python 3.12...
+echo Buscando Python 3.14...
 
 where py >nul 2>nul
 if %errorlevel%==0 (
-    py -3.12 --version >nul 2>nul
+    py -3.14 --version >nul 2>nul
     if %errorlevel%==0 (
-        set "PYTHON_COMMAND=py -3.12"
+        set "PYTHON_COMMAND=py -3.14"
         goto create_environment
     )
 )
@@ -20,7 +20,7 @@ if %errorlevel%==0 (
 )
 
 echo ERROR: No se encontro Python.
-echo Solicita a TI Python 3.12 y vuelve a ejecutar este archivo.
+echo Solicita a TI Python 3.14 y vuelve a ejecutar este archivo.
 exit /b 1
 
 :check_python
