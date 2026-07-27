@@ -1,7 +1,10 @@
+"""Chatbot con dos capas: Planeador y Ejecutor."""
+
 from __future__ import annotations
 
 import os
 import time
+import json
 from pathlib import Path
 from typing import Any
 
@@ -12,19 +15,13 @@ from langchain_openrouter import ChatOpenRouter
 EXIT_COMMANDS = {"salir", "exit", "quit"}
 MAX_HISTORY_TURNS = 10
 DEFAULT_MODEL = "openrouter/free"
-FREE_MODELS_ENV = "OPENROUTER_FREE_MODELS"
 
 DEFAULT_SYSTEM_ROLE = ""
 SYSTEM_PROMPT_FILE = "system_prompt.txt"
 PROMPTS_DIR = "prompts"
 
-# Roles por palabras clave y modelos asociados
+# Roles disponibles para ejecutor (sin Arquitecto)
 ROLE_KEYWORDS = {
-    "Arquitecto": {
-        "keywords": {"arquitecto", "diseño", "proyecto", "plan", "estructura", "arquitectura", "diagrama", "blueprint", "planear", "diseñar"},
-        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
-        "prompt_file": "system_prompt.md"
-    },
     "Python": {
         "keywords": {"python", "pandas", "dataframe", "numpy", "script", "código", "programación", "función", "clase"},
         "model": "poolside/laguna-m1:free",
@@ -41,6 +38,10 @@ ROLE_KEYWORDS = {
         "prompt_file": "prompt_analisis_llm.md"
     }
 }
+
+# Modelo para planeador (Arquitecto)
+PLANNER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+PLANNER_PROMPT_FILE = "system_prompt.md"
 
 
 def load_system_instructions(file_name: str = SYSTEM_PROMPT_FILE) -> str:
@@ -63,29 +64,9 @@ def load_prompt_file(file_name: str) -> str:
         return ""
 
 
-def detect_role(user_input: str) -> str | None:
-    """Detect the role based on keywords in user input."""
-    text_lower = user_input.lower()
-    
-    for role, config in ROLE_KEYWORDS.items():
-        if any(keyword in text_lower for keyword in config["keywords"]):
-            return role
-    
-    return None
-
-
-def get_model_for_role(role: str | None) -> str:
-    """Get the model for the detected role."""
-    if role and role in ROLE_KEYWORDS:
-        return ROLE_KEYWORDS[role]["model"]
-    
-    # Default model
-    return DEFAULT_MODEL
-
-
-def get_prompt_for_role(role: str | None) -> str:
-    """Get the system prompt for the detected role."""
-    if role and role in ROLE_KEYWORDS:
+def get_prompt_for_role(role: str) -> str:
+    """Get the system prompt for a role."""
+    if role in ROLE_KEYWORDS:
         prompt_file = ROLE_KEYWORDS[role]["prompt_file"]
         prompt = load_prompt_file(prompt_file)
         if prompt:
@@ -95,9 +76,19 @@ def get_prompt_for_role(role: str | None) -> str:
     return load_system_instructions()
 
 
-def build_system_prompt(role: str, instructions: str) -> str:
-    """Build a system prompt with a variable role and fixed instructions."""
-    return f"{role.strip()}\n\n{instructions.strip()}".strip()
+def get_planner_prompt() -> str:
+    """Get the planner (Arquitecto) prompt."""
+    prompt = load_prompt_file(PLANNER_PROMPT_FILE)
+    if prompt:
+        return prompt
+    return load_system_instructions()
+
+
+def get_model_for_role(role: str) -> str:
+    """Get the model for a role."""
+    if role in ROLE_KEYWORDS:
+        return ROLE_KEYWORDS[role]["model"]
+    return DEFAULT_MODEL
 
 
 def require_environment_variable(name: str) -> str:
@@ -142,20 +133,6 @@ def trim_history(
     return system_message + recent_messages
 
 
-def get_model_candidates() -> list[str]:
-    """Build a de-duplicated model candidate list from environment variables."""
-    configured_model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    fallback_raw = os.getenv(FREE_MODELS_ENV, "")
-    fallback_models = [m.strip() for m in fallback_raw.split(",") if m.strip()]
-
-    candidates: list[str] = []
-    for model_name in [configured_model, *fallback_models]:
-        if model_name not in candidates:
-            candidates.append(model_name)
-
-    return candidates
-
-
 def create_model(model_name: str) -> ChatOpenRouter:
     """Create the OpenRouter model configured from environment variables."""
     require_environment_variable("OPENROUTER_API_KEY")
@@ -167,99 +144,257 @@ def create_model(model_name: str) -> ChatOpenRouter:
     )
 
 
-def main() -> None:
-    """Run the terminal chatbot with dynamic roles and models based on user input."""
+def extract_plan_from_response(response_text: str) -> dict:
+    """Extract plan structure from planner response."""
+    # Try to extract JSON from response
+    try:
+        # Look for JSON block
+        if "```json" in response_text:
+            json_start = response_text.find("```json") + 7
+            json_end = response_text.find("```", json_start)
+            json_str = response_text[json_start:json_end].strip()
+            plan = json.loads(json_str)
+            return plan
+        elif "{" in response_text and "}" in response_text:
+            # Try parsing entire response
+            json_start = response_text.find("{")
+            json_end = response_text.rfind("}") + 1
+            json_str = response_text[json_start:json_end]
+            plan = json.loads(json_str)
+            return plan
+    except (json.JSONDecodeError, ValueError):
+        pass
+    
+    # Fallback: create plan from response text
+    return {
+        "es_viable": True,
+        "rol_asignado": "LLM",
+        "plan_ejecucion": response_text,
+        "pasos": [response_text],
+        "contexto_importante": ""
+    }
+
+
+def planner_phase() -> dict | None:
+    """
+    FASE PLANEAMIENTO: Interactúa con usuario y genera plan.
+    
+    Retorna:
+        dict con estructura del plan o None si usuario cancela
+    """
     load_dotenv()
     
-    # Initialize with default model
-    current_role: str | None = None
-    current_model_name = get_model_for_role(None)
-    model = create_model(current_model_name)
+    planner_model = create_model(PLANNER_MODEL)
+    planner_prompt = get_planner_prompt()
+    
+    planner_prompt = f"""{planner_prompt}
 
-    system_prompt = get_prompt_for_role(None)
+## INSTRUCCIONES ESPECIALES PARA MODO PLANEADOR
+
+Eres un Planeador (Arquitecto) cuyo objetivo es:
+1. Entender qué necesita el usuario
+2. Hacer preguntas de clarificación si es necesario
+3. Determinar si es viable resolver la solicitud
+4. Asignar el rol correcto (Python, SQL, o LLM)
+5. Generar un plan estructurado de ejecución
+
+Roles disponibles:
+- Python: Para manipulación de datos, scripts, pandas
+- SQL: Para consultas de base de datos, diseño de esquemas
+- LLM: Para análisis de contenido, IA, prompts
+
+Responde SIEMPRE en este formato JSON cuando termines de planear:
+```json
+{{
+  "es_viable": true/false,
+  "razon_si_no_viable": "Explicación breve si no es viable",
+  "rol_asignado": "Python|SQL|LLM",
+  "plan_ejecucion": "Descripción detallada del plan",
+  "pasos": ["paso 1", "paso 2", ...],
+  "contexto_importante": "Información relevante para el ejecutor"
+}}
+```
+
+Si necesitas aclarar algo, pregunta al usuario naturalmente antes del JSON final."""
 
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": system_prompt}
+        {"role": "system", "content": planner_prompt}
     ]
 
-    print(
-        "Mi primer Chatbot vía OpenRouter.\n"
-        f"Modelo: {current_model_name}\n"
-        "Escribe 'salir' para terminar.\n"
-        "El sistema detectará automáticamente el rol (Arquitecto, Python, SQL, LLM) y usará el modelo adecuado.\n"
-    )
+    print("\n" + "="*70)
+    print("[FASE PLANEAMIENTO] - Analizando tu solicitud")
+    print("="*70 + "\n")
 
     while True:
         try:
             user_input = input("Tú: ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nHasta luego.")
+            print("\n[PLANEADOR] Hasta luego.")
+            return None
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in EXIT_COMMANDS:
+            print("[PLANEADOR] Hasta luego.")
+            return None
+
+        messages.append({"role": "user", "content": user_input})
+
+        try:
+            response = planner_model.invoke(messages)
+            bot_text = response_to_text(response)
+
+            if not bot_text:
+                bot_text = "No se recibió contenido del modelo."
+
+            print(f"\n[Planeador]: {bot_text}\n")
+            messages.append({"role": "assistant", "content": bot_text})
+            messages = trim_history(messages)
+
+            # Check if plan is ready (contains JSON)
+            if "```json" in bot_text or ("es_viable" in bot_text and "rol_asignado" in bot_text):
+                plan = extract_plan_from_response(bot_text)
+                
+                if plan.get("es_viable") == False:
+                    print(f"\n[PLANEADOR] ❌ No es viable: {plan.get('razon_si_no_viable', 'Sin detalles')}")
+                    print("[PLANEADOR] Por favor, reformula tu solicitud o intenta con algo diferente.\n")
+                    messages = messages[:-2]  # Remover último mensaje del usuario
+                else:
+                    print(f"\n[PLANEADOR] ✓ Plan generado. Rol asignado: {plan.get('rol_asignado')}")
+                    return plan
+
+            time.sleep(1)
+
+        except Exception as error:
+            error_text = str(error)
+            print(f"\n[ERROR Planeador]: {error_text}\n")
+
+            if "Insufficient credits" in error_text:
+                print("Tu cuenta de OpenRouter no tiene créditos habilitados.\n")
+
+            if messages and messages[-1].get("role") == "user":
+                messages.pop()
+
+
+def executor_phase(plan: dict) -> None:
+    """
+    FASE EJECUCIÓN: Ejecuta el plan con el rol asignado.
+    
+    Args:
+        plan: Diccionario con estructura del plan
+    """
+    load_dotenv()
+    
+    role_asignado = plan.get("rol_asignado", "LLM")
+    modelo_ejecutor = get_model_for_role(role_asignado)
+    executor_model = create_model(modelo_ejecutor)
+    executor_prompt = get_prompt_for_role(role_asignado)
+
+    # Preparar prompt inicial para ejecutor con el plan
+    plan_context = f"""Plan de Ejecución:
+{plan.get('plan_ejecucion', '')}
+
+Pasos a seguir:
+{chr(10).join(f"- {paso}" for paso in plan.get('pasos', []))}
+
+Contexto importante:
+{plan.get('contexto_importante', 'N/A')}"""
+
+    executor_prompt = f"""{executor_prompt}
+
+## CONTEXTO DEL PLAN
+{plan_context}
+
+Tu tarea es ejecutar este plan paso a paso, interactuando con el usuario según sea necesario."""
+
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": executor_prompt},
+        {"role": "assistant", "content": f"Entendido. Voy a ejecutar el plan asignado.\n\nPlan:\n{plan_context}"}
+    ]
+
+    print("\n" + "="*70)
+    print(f"[FASE EJECUCIÓN] - Usando rol: {role_asignado}")
+    print(f"Modelo: {modelo_ejecutor}")
+    print("="*70 + "\n")
+
+    print(f"[Ejecutor]: Entendido. Voy a ejecutar el plan asignado.\n\nPlan:\n{plan_context}\n")
+
+    turn_count = 0
+    
+    while True:
+        try:
+            user_input = input("Tú: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[Ejecutor] Hasta luego.")
             break
 
         if not user_input:
             continue
 
         if user_input.lower() in EXIT_COMMANDS:
-            print("Hasta luego.")
+            print("[Ejecutor] Hasta luego.")
             break
 
-        # Detect role from user input
-        detected_role = detect_role(user_input)
-        
-        # Update model and prompt if role changed
-        if detected_role != current_role:
-            current_role = detected_role
-            new_model_name = get_model_for_role(detected_role)
-            new_prompt = get_prompt_for_role(detected_role)
-            
-            # Update model if it changed
-            if new_model_name != current_model_name:
-                current_model_name = new_model_name
-                model = create_model(current_model_name)
-                print(f"[Cambio de modelo: {current_model_name}]\n")
-            
-            # Update system prompt
-            system_prompt = new_prompt
-            messages[0] = {"role": "system", "content": system_prompt}
-            
-            if detected_role:
-                print(f"[Rol detectado: {detected_role}]\n")
-
+        turn_count += 1
         messages.append({"role": "user", "content": user_input})
 
         try:
-            response = model.invoke(messages)
+            response = executor_model.invoke(messages)
             bot_text = response_to_text(response)
 
             if not bot_text:
                 bot_text = "No se recibió contenido del modelo."
 
-            print(f"Bot: {bot_text}\n")
+            print(f"\n[{role_asignado}]: {bot_text}\n")
             messages.append({"role": "assistant", "content": bot_text})
             messages = trim_history(messages)
 
-            time.sleep(2)
+            time.sleep(1)
 
         except Exception as error:
             error_text = str(error)
-
-            print(f"Error al consultar OpenRouter: {error_text}\n")
+            print(f"\n[ERROR Ejecutor]: {error_text}\n")
 
             if "Insufficient credits" in error_text:
-                print(
-                    "Tu cuenta de OpenRouter no tiene créditos habilitados para esta API key.\n"
-                    "Verifica que la key pertenezca a la cuenta correcta o revisa la política actual de uso free en OpenRouter.\n"
-                )
+                print("Tu cuenta de OpenRouter no tiene créditos habilitados.\n")
 
             if "unavailable for free" in error_text.lower():
-                print(
-                    "Ese modelo dejó de estar disponible en tier free.\n"
-                    f"Configura OPENROUTER_MODEL o {FREE_MODELS_ENV} en tu .env con modelos gratuitos alternativos.\n"
-                    "Ejemplo: OPENROUTER_FREE_MODELS=modelo1:free,modelo2:free\n"
-                )
+                print(f"El modelo {modelo_ejecutor} no está disponible en tier free.\n")
 
             if messages and messages[-1].get("role") == "user":
                 messages.pop()
+
+
+def main() -> None:
+    """Sistema de dos capas: Planeador → Ejecutor."""
+    load_dotenv()
+    
+    print("\n" + "="*70)
+    print("CHATBOT CON PLANEADOR Y EJECUTOR")
+    print("="*70)
+    print("Escribe 'salir' en cualquier momento para terminar.\n")
+
+    while True:
+        # FASE PLANEAMIENTO
+        plan = planner_phase()
+        
+        if plan is None:
+            break
+        
+        # FASE EJECUCIÓN
+        executor_phase(plan)
+        
+        # Preguntar si continuar
+        print("\n" + "="*70)
+        try:
+            continuar = input("¿Deseas hacer otra solicitud? (s/n): ").strip().lower()
+            if continuar not in {"s", "si", "yes", "y"}:
+                print("Hasta luego.")
+                break
+        except (EOFError, KeyboardInterrupt):
+            print("\nHasta luego.")
+            break
 
 
 if __name__ == "__main__":
