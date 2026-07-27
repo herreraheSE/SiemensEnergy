@@ -11,7 +11,7 @@ from langchain_openrouter import ChatOpenRouter
 
 EXIT_COMMANDS = {"salir", "exit", "quit"}
 MAX_HISTORY_TURNS = 10
-DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+DEFAULT_MODEL = "openrouter/free"
 FREE_MODELS_ENV = "OPENROUTER_FREE_MODELS"
 
 DEFAULT_SYSTEM_ROLE = ""
@@ -171,6 +171,7 @@ def main() -> None:
 
     print(
         "Mi primer Chatbot vía OpenRouter.\n"
+        f"Modelo: {model_name}\n"
         "Escribe 'salir' para terminar.\n"
         "El sistema detectará automáticamente si preguntas sobre SQL, IA/LLM, Pandas o desarrollo general.\n"
     )
